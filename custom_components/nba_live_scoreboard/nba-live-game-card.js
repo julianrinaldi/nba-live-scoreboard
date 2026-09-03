@@ -1,5 +1,5 @@
 const CARD_TAG = "nba-live-game-card";
-const CARD_VERSION = "1.2.0"; // x-release-please-version
+const CARD_VERSION = "1.3.0"; // x-release-please-version
 const EDITOR_TAG = "nba-live-game-card-editor";
 const INTEGRATION_DOMAIN = "nba_live_scoreboard";
 const DOCS_URL = "https://github.com/julianrinaldi/nba-live-scoreboard";

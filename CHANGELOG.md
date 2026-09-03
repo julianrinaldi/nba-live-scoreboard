@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.0](https://github.com/julianrinaldi/nba-live-scoreboard/compare/v1.2.0...v1.3.0) (2026-09-03)
+
+
+### Features
+
+* add configurable next-game visibility window ([e860600](https://github.com/julianrinaldi/nba-live-scoreboard/commit/e860600e07f0af9f737d790b3f263ab17eebd898))
+* add persistent post-game card visibility window ([762bf31](https://github.com/julianrinaldi/nba-live-scoreboard/commit/762bf31db75073beb4fe9c3b56e6a2d89e6de520))
+* initial NBA Live Scoreboard HACS integration ([a0eb319](https://github.com/julianrinaldi/nba-live-scoreboard/commit/a0eb31951472a78422465d13c4d1863de273e9b7))
+
 ## [1.2.0](https://github.com/julianrinaldi/nba-live-scoreboard/releases/tag/v1.2.0) (2026-09-03)
 
 ### Features

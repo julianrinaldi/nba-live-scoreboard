@@ -76,6 +76,86 @@ function fireVisibilityTimer(h,card,now) {
   const id=card._visibilityTimer, timer=h.timers.get(id);
   assert(timer); h.timers.delete(id); h.clock.now=now; timer.fn();
 }
+function finished(hoursAgo = 1, nextHours = null) {
+  const attrs=upcoming(48);
+  attrs.mode="final";
+  attrs.competition.status={period:4,type:{state:"post",name:"STATUS_FINAL",completed:true}};
+  attrs.competition.date=new Date(WINDOW_NOW-5*3600000).toISOString();
+  attrs.last_game_end=new Date(WINDOW_NOW-hoursAgo*3600000).toISOString();
+  attrs.last_game_end_event_id=attrs.display_event_id;
+  attrs.last_game_end_source="espn_end_play";
+  attrs.next_game_start=nextHours==null?null:upcoming(nextHours).next_game_start;
+  return attrs;
+}
+test("post-game option is optional and has a fractional-hours visual editor field",()=>{
+  const h=harness(WINDOW_NOW);assert.equal(h.CARD_DEFAULTS.show_after_hours,0);
+  const field=h.EDITOR_SCHEMA.flatMap(s=>s.schema||[s]).find(s=>s.name==="show_after_hours");
+  assert.equal(field.selector.number.min,0);assert.equal(field.selector.number.step,0.5);
+  for(const value of [undefined,null,""," ",0,"0",0.5,"4"]){
+    const card=cardFor(h,finished(),{show_within_hours:24,show_after_hours:value});
+    assert.equal(card.config.show_after_hours,Number(value||0));
+  }
+  for(const value of [-1,"-1",Infinity,"Infinity",NaN,true,false,{},[],"tomorrow"])
+    assert.throws(()=>cardFor(h,finished(),{show_after_hours:value}),/show_after_hours.*non-negative/);
+});
+test("post-game setting extends pre-game hiding but does not change always-visible mode",()=>{
+  const h=harness(WINDOW_NOW),attrs=finished(1);
+  assert.equal(cardFor(h,attrs,{show_within_hours:24}).hidden,true);
+  assert.equal(cardFor(h,attrs,{show_within_hours:24,show_after_hours:4}).hidden,false);
+  assert.equal(cardFor(h,finished(20),{show_after_hours:4}).hidden,false);
+});
+test("post-game window expires automatically at the exact finish-relative boundary",()=>{
+  const h=harness(WINDOW_NOW),attrs=finished(3.5),card=cardFor(h,attrs,{show_within_hours:24,show_after_hours:4});
+  assert.equal(card.hidden,false);assert.equal(h.intervals.size,0);
+  fireVisibilityTimer(h,card,WINDOW_NOW+1800000-1);assert.equal(card.hidden,false);
+  assert.equal(h.timers.get(card._visibilityTimer).delay,1);
+  fireVisibilityTimer(h,card,WINDOW_NOW+1800000);assert.equal(card.hidden,true);
+  assert.equal(card.getCardSize(),0);assert.equal(card.events.at(-1).detail.value,false);
+});
+test("overlapping pre- and post-game windows combine without hiding between them",()=>{
+  const h=harness(WINDOW_NOW),attrs=finished(3.5,24+10/3600);
+  const card=cardFor(h,attrs,{show_within_hours:24,show_after_hours:4});
+  assert.equal(card.hidden,false);assert.equal(h.timers.get(card._visibilityTimer).delay,10000);
+  fireVisibilityTimer(h,card,WINDOW_NOW+10000);assert.equal(card.hidden,false);
+  fireVisibilityTimer(h,card,WINDOW_NOW+1800000);assert.equal(card.hidden,false);
+  attrs.next_game_start=upcoming(48).next_game_start;card.render();assert.equal(card.hidden,true);
+});
+test("unknown, invalid, future and stale finishes never start a new post-game countdown",()=>{
+  const h=harness(WINDOW_NOW);
+  for(const value of [undefined,null,"","bad",true,0,"2026-09-03T15:00:00",
+    new Date(WINDOW_NOW+1).toISOString(),new Date(WINDOW_NOW-4*3600000).toISOString()]){
+    const attrs=finished();attrs.last_game_end=value;
+    assert.equal(cardFor(h,attrs,{show_within_hours:24,show_after_hours:4}).hidden,true);
+  }
+});
+test("post-game time uses timezone-aware finish metadata rather than kickoff or displayed game",()=>{
+  const h=harness(WINDOW_NOW),attrs=finished();attrs.last_game_end="2026-09-03T11:00:00-04:00";
+  attrs.mode="next";attrs.competition=upcoming(48).competition;attrs.next_game_start=upcoming(48).next_game_start;
+  assert.equal(cardFor(h,attrs,{show_within_hours:24,show_after_hours:2}).hidden,false);
+  assert.equal(cardFor(h,attrs,{show_within_hours:24,show_after_hours:0.5}).hidden,true);
+});
+test("refreshing or reopening does not reset a post-game timer and hidden navigation cannot extend it",()=>{
+  const h=harness(WINDOW_NOW),attrs=finished(3.5),config={show_within_hours:24,show_after_hours:4};
+  const card=cardFor(h,attrs,config);card._navOffset=1;card._navGameData=finished(0);
+  h.clock.now=WINDOW_NOW+1800000;card.render();assert.equal(card.hidden,true);assert.equal(card._navOffset,0);
+  const reopened=cardFor(h,attrs,config);assert.equal(reopened.hidden,true);
+  reopened.isConnected=false;reopened.disconnectedCallback();reopened.isConnected=true;reopened.connectedCallback();
+  assert.equal(reopened.hidden,true);
+});
+test("post-game configuration edits take effect immediately without changing other card options",()=>{
+  const h=harness(WINDOW_NOW),card=cardFor(h,finished(2),{show_within_hours:24,show_after_hours:4});
+  card.setConfig({entity:card.config.entity,show_within_hours:24,show_after_hours:1,show_linescore:true});
+  assert.equal(card.hidden,true);assert.equal(card.config.show_linescore,true);
+  card.setConfig({...card.config,show_after_hours:3});assert.equal(card.hidden,false);
+  card.setConfig({...card.config,show_after_hours:0});assert.equal(card.hidden,true);
+  card.preview=true;assert.equal(card.hidden,false);card.preview=false;assert.equal(card.hidden,true);
+});
+test("live games remain visible even with an expired or unavailable last-game finish",()=>{
+  const h=harness(WINDOW_NOW),attrs=fixture();attrs.last_game_end=finished(48).last_game_end;
+  attrs.next_game_start=null;
+  const card=cardFor(h,attrs,{show_within_hours:1,show_after_hours:0.5});assert.equal(card.hidden,false);
+  attrs.last_game_end=null;card.render();assert.equal(card.hidden,false);
+});
 test("hours window defaults to disabled and is available in the visual editor",()=>{
   const h=harness(WINDOW_NOW),card=cardFor(h,upcoming(200));
   assert.equal(h.CARD_DEFAULTS.show_within_hours,0);assert.equal(card.hidden,false);

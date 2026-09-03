@@ -78,7 +78,7 @@ If the card is missing from the picker, refresh the dashboard after setting up t
 ```yaml
 lovelace:
   resources:
-    - url: /hacsfiles/nba_live_scoreboard/nba-live-game-card.js?v=110
+    - url: /hacsfiles/nba_live_scoreboard/nba-live-game-card.js?v=120
       type: module
 ```
 
@@ -92,6 +92,7 @@ Do not replace other resources or dashboards.
 | `title` | `""` | Upstream-compatible; no separate title heading is rendered |
 | `refresh_rate` | `0` | Local repaint seconds; does not control feed polling |
 | `show_within_hours` | `0` | Hide outside the next game's hours window; `0` or blank disables hiding. Live games always show. |
+| `show_after_hours` | `0` | With game-window hiding enabled, keep the card visible this many hours after the last recorded game finish; `0` or blank adds no post-game time. |
 | `show_matchup` | `true` | Scoring-leader matchup or Game Leaders |
 | `show_records` | `true` | Win-loss records on compact pregame/final cards |
 | `show_linescore` | `false` | Quarter/overtime points in the expanded live view |
@@ -126,11 +127,28 @@ entity: sensor.nba_live_scoreboard_ny
 show_within_hours: 24
 ```
 
-The boundary is inclusive and fractional hours are supported. Live games, including halftime and in-progress delays, stay visible. When a game finishes, the card hides unless the next game is already within the window. An available sensor with no upcoming game also hides; cancelled, postponed, and unconfirmed start times do not count. The rule uses the team's actual next game even when the card still displays a recent final or you browse the schedule.
+The boundary is inclusive and fractional hours are supported. Live games, including halftime and in-progress delays, stay visible. When a game finishes, the card hides unless the next game is already within the window or a configured post-game window is still active. An available sensor with no upcoming game also hides outside its post-game window; cancelled, postponed, and unconfirmed start times do not count. The rule uses the team's actual next game even when the card still displays a recent final or you browse the schedule.
 
-Hidden cards keep receiving Home Assistant updates and check the clock automatically, even with `refresh_rate: 0`. No dashboard refresh or extra ESPN polling is needed. A just-starting game remains visible while the feed catches up; a stale scheduled status expires after six hours unless the feed confirms a live game. Editor previews and missing/unavailable-entity diagnostics remain visible so settings and connection problems can be fixed. Set `0`, clear the field, or remove the option to restore the existing always-visible behavior. Each card can have a different window.
+Hidden cards keep receiving Home Assistant updates and check the clock automatically, even with `refresh_rate: 0`. The card's timer does not refresh the dashboard or poll ESPN; the integration may fetch and cache the latest final game's summary to recover its finish time. A just-starting game remains visible while the feed catches up; a stale scheduled status expires after six hours unless the feed confirms a live game. Editor previews and missing/unavailable-entity diagnostics remain visible so settings and connection problems can be fixed. Set `0`, clear the field, or remove the option to restore the existing always-visible behavior. Each card can have a different window.
 
 After updating through HACS, restart Home Assistant and refresh the dashboard once to load the new integration and bundled card.
+
+### Keep the card visible after a game ends
+
+Set **Show after game ends (hours)** in the visual editor, or add `show_after_hours` to the same card. For example:
+
+```yaml
+type: custom:nba-live-game-card
+entity: sensor.nba_live_scoreboard_ny
+show_within_hours: 24
+show_after_hours: 4
+```
+
+This shows the card starting 24 hours before the next game, throughout live play, and for four hours after the last game finishes. At the four-hour mark it hides automatically unless another game's pre-game window already applies. Fractional hours work, such as `0.5` for 30 minutes. Both options are per card, not integration-wide.
+
+`show_after_hours: 0`, blank, or omission adds no post-game extension. If `show_within_hours` is `0` or blank, hiding is disabled and the card stays visible regardless of the post-game setting. This setting controls visibility only; the existing automatic game selection and schedule browsing are unchanged.
+
+The countdown uses the integration's `last_game_end` timestamp, preferring an ESPN-reported end-of-game marker (`espn_end_play`), whose timestamp may differ from the actual final whistle. If that timestamp is missing, a closely observed live-to-final transition can provide a saved, approximate fallback (`observed_transition`), subject to polling delay. Neither source guarantees the exact whistle time. Reloading Home Assistant or opening another dashboard does not reset the countdown. Unknown finish times are not guessed from kickoff or later score corrections. The sensor also exposes `last_game_end_event_id` and `last_game_end_source` for diagnosis.
 
 ### Other display options
 
@@ -241,6 +259,8 @@ Game statistics belong to the selected event. Season/career tables show availabl
 ## Development and Validation
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) and [docs/VALIDATION.md](docs/VALIDATION.md). Workflows retain Tests, Hassfest, HACS validation, and release-please.
+
+See [postgame-window validation](docs/POSTGAME_VALIDATION.md) for v1.2.0 timing, persistence, and isolated Home Assistant browser checks.
 
 ```sh
 python -m pip install pytest pytest-asyncio ruff

@@ -1,0 +1,56 @@
+{
+  "athlete": {
+    "id": "3934672",
+    "firstName": "Jalen",
+    "lastName": "Brunson",
+    "displayName": "Jalen Brunson",
+    "fullName": "Jalen Brunson",
+    "debutYear": 2018,
+    "jersey": "11",
+    "college": {
+      "id": "222",
+      "mascot": "Wildcats",
+      "name": "Villanova",
+      "shortName": "Villanova",
+      "abbrev": "VILL"
+    },
+    "headshot": {
+      "href": "https://a.espncdn.com/i/headshots/nba/players/full/3934672.png",
+      "alt": "Jalen Brunson"
+    },
+    "position": {
+      "id": "3",
+      "name": "Guard",
+      "displayName": "Guard",
+      "abbreviation": "G",
+      "leaf": false,
+      "slug": "guard"
+    },
+    "team": {
+      "id": "18",
+      "name": "Knicks",
+      "abbreviation": "NY",
+      "displayName": "New York Knicks",
+      "logos": [
+        {
+          "href": "https://a.espncdn.com/i/teamlogos/nba/500/ny.png",
+          "width": 500,
+          "height": 500,
+          "rel": [
+            "full",
+            "default"
+          ]
+        }
+      ]
+    },
+    "status": {
+      "id": "1",
+      "name": "Active",
+      "type": "active",
+      "abbreviation": "Active"
+    },
+    "displayHeight": "6' 2\"",
+    "displayWeight": "190 lbs",
+    "age": 30
+  }
+}

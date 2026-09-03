@@ -1,0 +1,32 @@
+{
+  "season": {
+    "year": 2027,
+    "type": 1,
+    "name": "Preseason",
+    "displayName": "2026-27",
+    "half": 1
+  },
+  "requestedSeason": {
+    "year": 2026,
+    "type": 5,
+    "name": "Play-In Season",
+    "displayName": "2025-26"
+  },
+  "events": [
+    {
+      "id": "401866757",
+      "date": "2026-04-15T23:30Z",
+      "name": "Orlando Magic at Philadelphia 76ers",
+      "season": {
+        "year": 2026,
+        "displayName": "2025-26"
+      },
+      "seasonType": {
+        "id": "5",
+        "type": 5,
+        "name": "Play-In Season",
+        "abbreviation": "playin"
+      }
+    }
+  ]
+}

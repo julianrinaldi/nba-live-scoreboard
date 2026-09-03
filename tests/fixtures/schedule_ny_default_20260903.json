@@ -1,0 +1,94 @@
+{
+  "season": {
+    "year": 2027,
+    "type": 1,
+    "name": "Preseason",
+    "displayName": "2026-27",
+    "half": 1
+  },
+  "requestedSeason": {
+    "year": 2027,
+    "type": 1,
+    "name": "Preseason",
+    "displayName": "2026-27"
+  },
+  "team": {
+    "id": "18",
+    "abbreviation": "NY",
+    "displayName": "New York Knicks"
+  },
+  "events": [
+    {
+      "id": "401914101",
+      "date": "2026-10-05T23:00Z",
+      "season": {
+        "year": 2027,
+        "displayName": "2026-27"
+      },
+      "seasonType": {
+        "id": "1",
+        "type": 1,
+        "name": "Preseason",
+        "abbreviation": "pre"
+      },
+      "name": "New York Knicks at Philadelphia 76ers",
+      "shortName": "NY @ PHI",
+      "competitions": [
+        {
+          "id": "401914101",
+          "date": "2026-10-05T23:00Z",
+          "status": {
+            "clock": 0,
+            "displayClock": "0.0",
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Mon, October 5th at 7:00 PM EDT",
+              "shortDetail": "10/5 - 7:00 PM EDT"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "401908945",
+      "date": "2026-10-15T23:30Z",
+      "season": {
+        "year": 2027,
+        "displayName": "2026-27"
+      },
+      "seasonType": {
+        "id": "1",
+        "type": 1,
+        "name": "Preseason",
+        "abbreviation": "pre"
+      },
+      "name": "Toronto Raptors at New York Knicks",
+      "shortName": "TOR @ NY",
+      "competitions": [
+        {
+          "id": "401908945",
+          "date": "2026-10-15T23:30Z",
+          "status": {
+            "clock": 0,
+            "displayClock": "0.0",
+            "period": 0,
+            "type": {
+              "id": "1",
+              "name": "STATUS_SCHEDULED",
+              "state": "pre",
+              "completed": false,
+              "description": "Scheduled",
+              "detail": "Thu, October 15th at 7:30 PM EDT",
+              "shortDetail": "10/15 - 7:30 PM EDT"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

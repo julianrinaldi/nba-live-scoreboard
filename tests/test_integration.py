@@ -153,6 +153,7 @@ def test_sensor_contract_contains_nba_fields_and_no_other_sport_fields():
         team_abbr="NY", team_id=18, team_name="New York Knicks",
         mode="live", is_live=True, is_delayed=False, status_text="2:00 - 3rd",
         display_event_id="123", live_event_id="123", previous_event_id="122", next_event_id="124",
+        next_game_start="2026-10-05T23:00:00Z",
         selected_competition={"id": "123"}, period_context={"period": 3, "display_clock": "2:00"},
         recent_plays=[play], scoring_plays=[play], away_team={}, home_team={},
         featured_players={"away": {}, "home": {}}, situation={"away_timeouts": 2, "home_timeouts": 2},
@@ -162,6 +163,7 @@ def test_sensor_contract_contains_nba_fields_and_no_other_sport_fields():
     attrs = build_state_attributes(data)
     assert attrs["league"] == "NBA"
     assert attrs["game_active"] is True
+    assert attrs["next_game_start"] == "2026-10-05T23:00:00Z"
     assert attrs["period_context"]["period"] == 3
     assert attrs["recent_plays"][0]["score_value"] == 3
     assert attrs["recent_plays"][0]["coordinate"] == {}

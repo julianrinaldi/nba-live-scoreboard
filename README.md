@@ -78,7 +78,7 @@ If the card is missing from the picker, refresh the dashboard after setting up t
 ```yaml
 lovelace:
   resources:
-    - url: /hacsfiles/nba_live_scoreboard/nba-live-game-card.js?v=100
+    - url: /hacsfiles/nba_live_scoreboard/nba-live-game-card.js?v=110
       type: module
 ```
 
@@ -91,6 +91,7 @@ Do not replace other resources or dashboards.
 | `entity` | required | NBA scoreboard sensor |
 | `title` | `""` | Upstream-compatible; no separate title heading is rendered |
 | `refresh_rate` | `0` | Local repaint seconds; does not control feed polling |
+| `show_within_hours` | `0` | Hide outside the next game's hours window; `0` or blank disables hiding. Live games always show. |
 | `show_matchup` | `true` | Scoring-leader matchup or Game Leaders |
 | `show_records` | `true` | Win-loss records on compact pregame/final cards |
 | `show_linescore` | `false` | Quarter/overtime points in the expanded live view |
@@ -114,6 +115,24 @@ Do not replace other resources or dashboards.
 Expansion resets to the configured default for a new game. Schedule navigation returns to the automatically selected game after 60 seconds of inactivity; period navigation returns to the current period after 20 seconds.
 
 Period plays and final scoring plays are newest-first inside keyboard-scrollable panels capped at 320px, keeping the dashboard compact while retaining the complete available history.
+
+### Hide until the next game is close
+
+In the visual card editor, set **Show only within (hours, 0 = always)** to `24` to hide the entire card until the team's next game is within 24 hours. You can also use YAML:
+
+```yaml
+type: custom:nba-live-game-card
+entity: sensor.nba_live_scoreboard_ny
+show_within_hours: 24
+```
+
+The boundary is inclusive and fractional hours are supported. Live games, including halftime and in-progress delays, stay visible. When a game finishes, the card hides unless the next game is already within the window. An available sensor with no upcoming game also hides; cancelled, postponed, and unconfirmed start times do not count. The rule uses the team's actual next game even when the card still displays a recent final or you browse the schedule.
+
+Hidden cards keep receiving Home Assistant updates and check the clock automatically, even with `refresh_rate: 0`. No dashboard refresh or extra ESPN polling is needed. A just-starting game remains visible while the feed catches up; a stale scheduled status expires after six hours unless the feed confirms a live game. Editor previews and missing/unavailable-entity diagnostics remain visible so settings and connection problems can be fixed. Set `0`, clear the field, or remove the option to restore the existing always-visible behavior. Each card can have a different window.
+
+After updating through HACS, restart Home Assistant and refresh the dashboard once to load the new integration and bundled card.
+
+### Other display options
 
 ```yaml
 type: custom:nba-live-game-card

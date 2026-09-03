@@ -1,10 +1,12 @@
 const CARD_TAG = "nba-live-game-card";
-const CARD_VERSION = "1.0.0"; // x-release-please-version
+const CARD_VERSION = "1.1.0"; // x-release-please-version
 const EDITOR_TAG = "nba-live-game-card-editor";
 const INTEGRATION_DOMAIN = "nba_live_scoreboard";
 const DOCS_URL = "https://github.com/julianrinaldi/nba-live-scoreboard";
 const NAV_IDLE_RETURN_MS = 60000;
 const PERIOD_IDLE_RETURN_MS = 20000;
+const VISIBILITY_CHECK_MS = 60000;
+const PENDING_GAME_GRACE_MS = 6 * 60 * 60 * 1000;
 console.info("[" + CARD_TAG + "] " + CARD_VERSION + " loaded");
 window.customCards = window.customCards || [];
 if (!window.customCards.some((card) => card.type === CARD_TAG)) {
@@ -19,7 +21,7 @@ const CARD_DEFAULTS = {
   show_plays: true, show_play_results: true, show_period_summary: true,
   show_possession: true, show_court: true, show_situation: true,
   show_win_probability: true, show_shot_chart: false, show_highlights: false,
-  refresh_rate: 0, player_link_target: "popup", show_team_stats_popup: true,
+  refresh_rate: 0, show_within_hours: 0, player_link_target: "popup", show_team_stats_popup: true,
   team_stats_default_view: "auto", show_schedule_nav: true, show_period_nav: true,
   live_default_view: "collapsed", headshot_size: "auto",
 };
@@ -44,6 +46,9 @@ const EDITOR_SCHEMA = [
   { type: "grid", schema: [
     { name: "refresh_rate", selector: { number: {
       min: 0, max: 300, step: 1, mode: "box", unit_of_measurement: "s",
+    } } },
+    { name: "show_within_hours", selector: { number: {
+      min: 0, step: 0.5, mode: "box", unit_of_measurement: "h",
     } } },
     selectSchema("player_link_target", [
       { value: "popup", label: "In-card career popup" },
@@ -76,6 +81,7 @@ const EDITOR_SCHEMA = [
 const EDITOR_LABELS = {
   entity: "NBA Live Scoreboard entity", title: "Card title (optional)",
   refresh_rate: "Refresh rate (s, 0 = HA updates)", player_link_target: "Player name click",
+  show_within_hours: "Show only within (hours, 0 = always)",
   team_stats_default_view: "Team stats popup default view",
   live_default_view: "Live game default view", headshot_size: "Headshot size",
   show_team_stats_popup: "Enable team statistics popup",
@@ -90,6 +96,7 @@ const EDITOR_LABELS = {
 const EDITOR_HELPERS = {
   entity: "Pick the sensor created by the NBA Live Scoreboard integration.",
   refresh_rate: "0 leaves refreshing to Home Assistant state updates. This only repaints the card; it does not change ESPN polling.",
+  show_within_hours: "For example, 24 hides the card until the next game is within 24 hours. Live games stay visible. Blank or 0 disables hiding. The card reappears automatically, even with refresh rate 0; editing previews stay visible.",
   live_default_view: "Collapsed shows the two score rows and period/clock. Click that header or its chevron to expand. Resets for each new game.",
   headshot_size: "Auto scales with the card width. Presets pin a fixed pixel size.",
   show_schedule_nav: "Adds previous/next game arrows to non-live cards. Returns to the automatic game after 60 seconds idle.",
@@ -141,6 +148,57 @@ class NbaLiveGameCardEditor extends HTMLElement {
 
 if (!customElements.get(EDITOR_TAG)) {
   customElements.define(EDITOR_TAG, NbaLiveGameCardEditor);
+}
+
+function normalizeShowWithinHours(value) {
+  if (value == null || (typeof value === "string" && !value.trim())) return 0;
+  if (!["number", "string"].includes(typeof value) ||
+      !Number.isFinite(Number(value)) || Number(value) < 0) {
+    throw new Error("show_within_hours must be a non-negative number of hours (0 disables hiding).");
+  }
+  return Number(value);
+}
+
+function parseGameStart(value) {
+  // Reject local/ambiguous dates: this window is elapsed time, not calendar days.
+  return typeof value === "string" && /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+    ? Date.parse(value) : NaN;
+}
+
+function gameWindowVisibility(attrs, hours, now = Date.now()) {
+  if (!hours) return { visible: true, wakeAt: null };
+  const comp = attrs.competition || {};
+  const status = comp.status || {};
+  const type = status.type || {};
+  const name = String(type.name || "").toUpperCase();
+  const state = String(type.state || "").toLowerCase();
+  const terminal = type.completed === true || state === "post" ||
+    /FINAL|CANCEL|POSTPON/.test(name) || attrs.mode === "final";
+  const delayed = attrs.is_delayed === true || /DELAY|SUSPEND/.test(name);
+  const period = Number(status.period || attrs.period_context?.period || 0);
+  const active = !terminal && (!delayed || period > 0) &&
+    (attrs.is_live === true || attrs.game_active === true ||
+      ["in", "live"].includes(state) || name === "STATUS_IN_PROGRESS");
+  if (active) return { visible: true, wakeAt: null };
+
+  let rawStart = attrs.next_game_start;
+  // A new card paired temporarily with an older integration can still gate a
+  // known scheduled game. Explicit null means the refreshed schedule has none.
+  if (rawStart === undefined && !terminal &&
+      (state === "pre" || attrs.mode === "next") &&
+      comp.dateValid !== false && status.dateValid !== false && type.dateValid !== false &&
+      comp.timeValid !== false && status.timeValid !== false && type.timeValid !== false &&
+      comp.isTBDFlex !== true && status.isTBDFlex !== true && type.isTBDFlex !== true &&
+      !/TBD|TBA|to be determined|to be announced/i.test(
+        [name, type.detail, type.shortDetail, type.description].join(" "))) rawStart = comp.date;
+  const start = parseGameStart(rawStart);
+  if (!Number.isFinite(start) || start < now - PENDING_GAME_GRACE_MS ||
+      (terminal && start === parseGameStart(comp.date))) {
+    return { visible: false, wakeAt: null };
+  }
+  const boundary = start - hours * 3600000;
+  return { visible: now >= boundary,
+    wakeAt: now < boundary ? boundary : start + PENDING_GAME_GRACE_MS + 1 };
 }
 
 
@@ -835,6 +893,14 @@ function teamStatsTablesHtml(team, view, seasonStats) {
 
 class NbaLiveGameCard extends HTMLElement {
 
+  // Native hui-card otherwise detaches hidden children, which would stop the
+  // boundary timer and Home Assistant updates needed to reveal this card.
+  get connectedWhileHidden() { return true; }
+
+  get preview() { return this._preview === true; }
+  set preview(value) { this._preview = value === true; this.render(); }
+  get editMode() { return this._editMode === true; }
+  set editMode(value) { this._editMode = value === true; this.render(); }
 
   static getConfigElement() {
     return document.createElement(EDITOR_TAG);
@@ -849,7 +915,9 @@ class NbaLiveGameCard extends HTMLElement {
 
 
 
-    this.config = { ...CARD_DEFAULTS, ...(config || {}) };
+    const nextConfig = { ...CARD_DEFAULTS, ...(config || {}) };
+    nextConfig.show_within_hours = normalizeShowWithinHours(nextConfig.show_within_hours);
+    this.config = nextConfig;
     this._lastFingerprint = this._lastCompactFp = this._lastCompactHtml = this._lastLiveHtml = "";
 
     this._clearRefreshTimer();
@@ -864,8 +932,55 @@ class NbaLiveGameCard extends HTMLElement {
 
     this._navAnchorId = undefined;
     this._periodAnchorKey = undefined;
+    this.render();
+    if (this.isConnected) this._setupRefreshTimer();
   }
 
+  _clearVisibilityTimer() {
+    if (this._visibilityTimer != null) clearTimeout(this._visibilityTimer);
+    this._visibilityTimer = null;
+  }
+
+  _updateGameVisibility(stateObj) {
+    this._clearVisibilityTimer();
+    const enabled = this.config?.show_within_hours > 0;
+    const diagnostic = !this.config?.entity || !stateObj ||
+      ["unavailable", "unknown"].includes(stateObj.state);
+    const result = !enabled || diagnostic || this.preview || this.editMode
+      ? { visible: true, wakeAt: null }
+      : gameWindowVisibility(stateObj.attributes || {}, this.config.show_within_hours);
+    const hidden = !result.visible;
+    if (this._windowHidden !== hidden) {
+      this._windowHidden = hidden;
+      this._lastFingerprint = this._lastCompactFp = this._lastLiveHtml = "";
+      this.style.setProperty("display", hidden ? "none" : "");
+      this.toggleAttribute("hidden", hidden);
+      if (hidden) {
+        this._resetScheduleNav();
+        this._resetPeriodNav();
+        this._destroyPlayerCardPopup();
+        this._destroyLineupPopup();
+      }
+      this.dispatchEvent(new CustomEvent("card-visibility-changed", {
+        detail: { value: !hidden }, bubbles: true, composed: true,
+      }));
+    }
+    if (enabled && this.isConnected) {
+      const delay = result.wakeAt == null ? VISIBILITY_CHECK_MS :
+        Math.max(1, Math.min(VISIBILITY_CHECK_MS, result.wakeAt - Date.now()));
+      this._visibilityTimer = setTimeout(() => {
+        this._visibilityTimer = null;
+        if (this.isConnected) this.render();
+      }, delay);
+    }
+    return !hidden;
+  }
+
+  connectedCallback() {
+    this._visibilityDisconnected = false;
+    this.render();
+    if (this.config) this._setupRefreshTimer();
+  }
 
 
   _liveDefaultExpanded() {
@@ -2009,7 +2124,7 @@ class NbaLiveGameCard extends HTMLElement {
   _setupRefreshTimer() {
     this._clearRefreshTimer();
     const rate = Number(this.config.refresh_rate);
-    if (rate > 0 && this._hass) {
+    if (rate > 0 && this._hass && !this._visibilityDisconnected) {
       this._refreshInterval = setInterval(() => {
         if (this._hass && this.config?.entity) {
 
@@ -2025,7 +2140,9 @@ class NbaLiveGameCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    this._visibilityDisconnected = true;
     this._clearRefreshTimer();
+    this._clearVisibilityTimer();
     // Invalidate pending navigation and leave reconnect on the current game.
     // Merely clearing idle timers would strand an old game/period indefinitely.
     this._resetScheduleNav();
@@ -2036,6 +2153,7 @@ class NbaLiveGameCard extends HTMLElement {
   }
 
   _restoreCardFocus(previous, selector, attribute, value) {
+    if (this._windowHidden) return;
     // isConnected works through Home Assistant's shadow roots; document.contains
     // does not. If a live repaint replaced the opener, restore its logical twin.
     if (previous && previous.isConnected) {
@@ -2075,7 +2193,7 @@ class NbaLiveGameCard extends HTMLElement {
   }
 
   getCardSize() {
-    return 4;
+    return this._windowHidden ? 0 : 4;
   }
 
 
@@ -2116,6 +2234,8 @@ class NbaLiveGameCard extends HTMLElement {
 
   render() {
     if (!this._hass || !this.config || !this.content) return;
+    // Evaluate before the content fingerprint: time alone can change visibility.
+    if (!this._updateGameVisibility(this._hass.states[this.config.entity])) return;
     if (!this.config.entity) {
       this.content.innerHTML = '<div class="empty">Configure this card — choose an NBA Live Scoreboard entity.</div>';
       return;

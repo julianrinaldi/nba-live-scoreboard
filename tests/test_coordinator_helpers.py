@@ -640,3 +640,126 @@ async def test_double_overtime_navigation_rolls_back_to_first_overtime(coordinat
     current = await coordinator.async_period_at_offset(0)
     assert current["period_context"]["display_period"] == "2OT"
     assert (current["away_score"], current["home_score"]) == (127, 134)
+
+
+def test_next_game_start_ignores_recent_final_display_and_uses_cached_schedule(coordinator, monkeypatch):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    coordinator._get_json = AsyncMock(side_effect=AssertionError("Visibility metadata must not fetch"))
+    recent = event("100", -2, "post", "STATUS_FINAL")
+    upcoming = event("101", 4)
+    later = event("102", 24)
+    assert coordinator._select_event([later, recent, upcoming])[3] == "100"
+    assert coordinator._next_game_start([later, recent, upcoming]) == "2026-04-12T01:00:00Z"
+    coordinator._get_json.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("hours", "expected"), [
+    (3, "2026-04-12T00:00:00Z"), (0, "2026-04-11T21:00:00Z"),
+    (-6, "2026-04-11T15:00:00Z"), (-6.001, None),
+])
+def test_next_game_start_bounded_pending_grace(coordinator, monkeypatch, hours, expected):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    assert coordinator._next_game_start([event("100", hours)]) == expected
+
+
+@pytest.mark.parametrize("invalid", ["time", "date", "tbd", "tba", "flex", "type_flex", "tbd_name", "final_name", "unknown_status", "cancelled", "postponed", "final", "live", "non_team", "malformed", "naive"])
+def test_next_game_start_rejects_ineligible_games(coordinator, monkeypatch, invalid):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    candidate = event("100", 2)
+    comp = candidate["competitions"][0]
+    if invalid == "time":
+        comp["timeValid"] = False
+    elif invalid == "date":
+        candidate["dateValid"] = False
+    elif invalid in {"tbd", "tba"}:
+        comp["status"]["type"]["detail"] = invalid.upper()
+    elif invalid == "flex":
+        comp["status"]["isTBDFlex"] = True
+    elif invalid == "type_flex":
+        comp["status"]["type"]["isTBDFlex"] = True
+    elif invalid in {"tbd_name", "final_name"}:
+        comp["status"]["type"]["name"] = "STATUS_TBD" if invalid == "tbd_name" else "STATUS_FINAL"
+    elif invalid == "unknown_status":
+        comp["status"]["type"] = {"name": "STATUS_UNKNOWN", "state": "unknown"}
+    elif invalid in {"cancelled", "postponed", "final", "live"}:
+        comp["status"] = competition("in" if invalid == "live" else "post",
+                                     "STATUS_IN_PROGRESS" if invalid == "live" else f"STATUS_{invalid.upper()}")["status"]
+    elif invalid == "non_team":
+        comp["competitors"][0]["team"]["id"] = "27"
+    elif invalid == "malformed":
+        candidate["date"] = "not a date"
+    elif invalid == "naive":
+        candidate["date"] = "2026-04-11T23:00:00"
+    assert coordinator._next_game_start([candidate]) is None
+
+
+@pytest.mark.parametrize("name", ["STATUS_DELAYED", "STATUS_SUSPENDED"])
+@pytest.mark.parametrize(("hours", "period", "expected"), [
+    (2, 0, "2026-04-11T23:00:00Z"),
+    (-6, 0, "2026-04-11T15:00:00Z"),
+    (-6.001, 0, None),
+    (-1, 1, None),
+])
+def test_next_game_start_distinguishes_pregame_delay_from_live_delay(coordinator, monkeypatch, name, hours, period, expected):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    candidate = event("100", hours, "in", name)
+    candidate["competitions"][0]["status"]["period"] = period
+    assert coordinator._next_game_start([candidate]) == expected
+
+
+def test_next_game_start_normalizes_timezone_and_uses_event_status_fallback(coordinator, monkeypatch):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    candidate = event("100", 2)
+    candidate["date"] = "2026-04-11T19:00:00-04:00"
+    candidate["status"] = candidate["competitions"][0].pop("status")
+    assert coordinator._next_game_start([candidate]) == "2026-04-11T23:00:00Z"
+
+
+def test_next_game_start_fresh_final_overrides_stale_cached_pregame(coordinator, monkeypatch):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    cached = event("100", -2)
+    later = event("101", 4)
+    fresh = competition("post", "STATUS_FINAL")
+    fresh["id"] = "100"
+    assert coordinator._next_game_start([cached, later], "100", fresh) == "2026-04-12T01:00:00Z"
+    assert coordinator._next_game_start([cached], "100", fresh) is None
+
+
+def test_next_game_start_fresh_rescheduled_time_is_authoritative(coordinator, monkeypatch):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    cached = event("100", -7)
+    fresh = competition("pre", "STATUS_SCHEDULED")
+    fresh.update({"id": "100", "date": "2026-04-12T03:30:00+00:00"})
+    assert coordinator._next_game_start([cached], "100", fresh) == "2026-04-12T03:30:00Z"
+
+
+@pytest.mark.asyncio
+async def test_empty_game_data_exports_null_next_start_without_network(coordinator):
+    from custom_components.nba_live_scoreboard.sensor import build_state_attributes
+
+    coordinator._get_json = AsyncMock(side_effect=AssertionError("Idle data must not fetch"))
+    result = await coordinator._assemble_game_data([], "", "", "", "", {}, live_bridge=True)
+    assert result.next_game_start is None
+    assert build_state_attributes(result)["next_game_start"] is None
+    coordinator._get_json.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_final_assembly_carries_next_scheduled_start(coordinator, final, monkeypatch):
+    monkeypatch.setattr("custom_components.nba_live_scoreboard.coordinator.time.time",
+                        lambda: datetime(2026, 4, 11, 21, tzinfo=UTC).timestamp())
+    comp = final["header"]["competitions"][0]
+    cached = event(comp["id"], -2)
+    upcoming = event("101", 4)
+    coordinator._get_json = AsyncMock(side_effect=lambda url: final if "/summary?" in url else {})
+    result = await coordinator._assemble_game_data([cached, upcoming], comp["id"], comp["id"], "101", "",
+        {"team": {"displayName": "New York Knicks"}, "season": {"year": 2026}}, live_bridge=True)
+    assert result.mode == "final"
+    assert result.next_game_start == "2026-04-12T01:00:00Z"

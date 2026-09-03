@@ -8,7 +8,7 @@ import math
 import re
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import aiohttp
@@ -208,6 +208,7 @@ class NbaLiveScoreboardData:
     live_event_id: str = ""
     previous_event_id: str = ""
     next_event_id: str = ""
+    next_game_start: str | None = None
     selected_competition: Competition | None = None
     period_context: PeriodContext = field(default_factory=dict)
     recent_plays: list[RecentPlay] = field(default_factory=list)
@@ -331,6 +332,54 @@ class NbaLiveScoreboardCoordinator(DataUpdateCoordinator[NbaLiveScoreboardData])
         previous_id, next_id, live_id, display_id = (
             str(_dict(e).get("id") or "") for e in (previous, upcoming, live, display))
         return previous_id, next_id, live_id, display_id, display
+
+    def _next_game_start(
+        self, events: list[dict[str, Any]], display_id: str = "",
+        display_comp: dict[str, Any] | None = None,
+    ) -> str | None:
+        """Return the next valid scheduled start without changing display selection.
+
+        The sensor may intentionally retain a recent final while another
+        game approaches. This independent schedule timestamp lets each card
+        apply its own visibility window without any extra ESPN requests.
+        """
+        now = time.time()
+        starts = []
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            comp = _dict((_list(event.get("competitions")) or [{}])[0])
+            status = {**_dict(event.get("status")), **_dict(comp.get("status"))}
+            comp = {**comp, "status": status}
+            fresh = _dict(display_comp) if display_id and str(event.get("id") or "") == str(display_id) else {}
+            if fresh:
+                comp = {**comp, **fresh, "status": {**status, **_dict(fresh.get("status"))}}
+            if _resolve_my_side(comp, self.team_id)[0] is None or _is_final(comp) or _is_unplayed(comp):
+                continue
+            status_type = _status_type(comp)
+            state = str(status_type.get("state") or "").lower()
+            name = str(status_type.get("name") or "").upper()
+            if any(marker in name for marker in ("FINAL", "TBD", "TBA")):
+                continue
+            _detail, live, delayed = self._resolve_status_info(comp)
+            pregame_delay = delayed and _safe_int(_dict(comp.get("status")).get("period")) <= 0
+            if (live and not pregame_delay) or not (state == "pre" or name == "STATUS_SCHEDULED" or pregame_delay):
+                continue
+            if comp.get("timeValid", event.get("timeValid")) is False or comp.get("dateValid", event.get("dateValid")) is False:
+                continue
+            status = _dict(comp.get("status"))
+            detail = " ".join(str(status_type.get(key) or "") for key in ("detail", "shortDetail", "description"))
+            if (status_type.get("isTBDFlex") is True or status.get("isTBDFlex") is True
+                    or comp.get("isTBDFlex") is True or event.get("isTBDFlex") is True
+                    or re.search(r"\b(?:TBD|TBA)\b|to be determined|to be announced", detail, re.IGNORECASE)):
+                continue
+            timestamp = _parse_iso_ts(fresh.get("date") or event.get("date") or comp.get("date"))
+            # A cached pregame status may lag tipoff. Keep a bounded grace
+            # interval instead of flickering off at the scheduled start or
+            # retaining an abandoned pregame entry indefinitely.
+            if timestamp is not None and timestamp >= now - 6 * 60 * 60:
+                starts.append(timestamp)
+        return datetime.fromtimestamp(min(starts), UTC).isoformat().replace("+00:00", "Z") if starts else None
 
     @staticmethod
     def _event_at_offset(
@@ -1190,7 +1239,8 @@ class NbaLiveScoreboardCoordinator(DataUpdateCoordinator[NbaLiveScoreboardData])
     ) -> NbaLiveScoreboardData:
         team_name = str(_dict(schedule.get("team")).get("displayName") or self.team_abbr)
         if not display_id:
-            return NbaLiveScoreboardData(team_abbr=self.team_abbr, team_id=self.team_id, team_name=team_name)
+            return NbaLiveScoreboardData(team_abbr=self.team_abbr, team_id=self.team_id, team_name=team_name,
+                                         next_game_start=self._next_game_start(events))
         if not _ID_RE.fullmatch(str(display_id)):
             raise UpdateFailed("Invalid ESPN event ID")
         event = next((e for e in events if str(e.get("id") or "") == str(display_id)), {})
@@ -1265,6 +1315,7 @@ class NbaLiveScoreboardCoordinator(DataUpdateCoordinator[NbaLiveScoreboardData])
             team_abbr=self.team_abbr, team_id=self.team_id, team_name=team_name,
             display_event_id=display_id, previous_event_id=display_id if _is_final(comp) else prev_id,
             next_event_id=next_id, live_event_id=display_id if is_live else ("" if live_id == display_id else live_id),
+            next_game_start=self._next_game_start(events, display_id, comp),
             selected_competition=compact, period_context=context,
             recent_plays=self._normalize_recent_plays(summary), scoring_plays=self._normalize_scoring_plays(summary),
             away_team=away_team, home_team=home_team, featured_players=featured_players,
